@@ -65,6 +65,15 @@ def _get_networks_dbus() -> list[dict]:
         except Exception:
             pass
 
+        # Get active AP path to check which network is connected
+        active_ap_path = None
+        try:
+            active_ap_path = wifi.ActiveAccessPoint
+            if active_ap_path == "/":
+                active_ap_path = None
+        except Exception:
+            pass
+
         for ap_path in wifi.GetAccessPoints():
             ap = bus.get_proxy("org.freedesktop.NetworkManager", ap_path)
             ssid_bytes = ap.Ssid
@@ -77,13 +86,14 @@ def _get_networks_dbus() -> list[dict]:
             seen_ssids.add(ssid)
 
             security = _parse_security_flags(ap.WpaFlags, ap.RsnFlags)
+            is_connected = active_ap_path is not None and ap_path == active_ap_path
             networks.append(
                 {
                     "ssid": ssid,
                     "signal_strength": ap.Strength,
                     "security": security,
                     "is_open": security == "Open",
-                    "is_connected": False,
+                    "is_connected": is_connected,
                 }
             )
 
@@ -115,9 +125,12 @@ def _get_current_connection_dbus() -> Optional[dict]:
         ssid = bytes(ap.Ssid).decode("utf-8", errors="ignore")
         security = _parse_security_flags(ap.WpaFlags, ap.RsnFlags)
 
+        # Get interface name (e.g., wlp33s0f4u1) instead of device path ID
+        interface_name = device.Interface
+
         return {
             "ssid": ssid,
-            "device": device_path.split("/")[-1],
+            "device": interface_name,
             "signal_strength": ap.Strength,
             "security": security,
             "status": "Connected",
@@ -134,7 +147,10 @@ def _run_nmcli(args: list[str]) -> tuple[bool, str]:
             text=True,
             timeout=10,
         )
-        return result.returncode == 0, result.stdout.strip()
+        # Return stdout on success, stderr on failure
+        if result.returncode == 0:
+            return True, result.stdout.strip()
+        return False, result.stderr.strip() or result.stdout.strip()
     except Exception as e:
         return False, str(e)
 
@@ -252,22 +268,109 @@ def _get_current_connection_shell() -> Optional[dict]:
     return None
 
 
-def _connect_network_shell(ssid: str, password: Optional[str] = None) -> tuple[bool, str]:
-    args = ["device", "wifi", "connect", ssid]
-    if password:
-        args.extend(["password", password])
+def _delete_connection_profiles(ssid: str) -> bool:
+    """Delete all connection profiles matching the SSID."""
+    deleted = False
 
-    success, output = _run_nmcli(args)
+    # List all connections and find wireless ones matching this SSID
+    list_success, output = _run_nmcli(["-t", "-f", "NAME,TYPE", "connection", "show"])
+    if list_success and output:
+        for line in output.split("\n"):
+            parts = line.split(":")
+            if len(parts) >= 2 and "wireless" in parts[1].lower():
+                conn_name = parts[0]
+                # Match exact name or SSID contained in connection name
+                if conn_name == ssid or ssid in conn_name or conn_name in ssid:
+                    del_success, del_output = _run_nmcli(["connection", "delete", conn_name])
+                    print(f"[WiFi] Delete '{conn_name}': {'OK' if del_success else del_output}")
+                    if del_success:
+                        deleted = True
+
+    # Also try exact SSID delete (may have quotes or escaping)
+    if not deleted:
+        del_success, _ = _run_nmcli(["connection", "delete", ssid])
+        if del_success:
+            print(f"[WiFi] Deleted connection: {ssid}")
+            deleted = True
+
+    return deleted
+
+
+def _connect_network_shell(ssid: str, password: Optional[str] = None) -> tuple[bool, str]:
+    print(f"[WiFi] Connecting to: {ssid}")
+
+    # Delete any existing profile for this SSID to avoid conflicts
+    _delete_connection_profiles(ssid)
+
+    # Create connection with proper security settings
+    add_args = [
+        "connection", "add",
+        "type", "wifi",
+        "con-name", ssid,
+        "ssid", ssid,
+    ]
+
+    if password:
+        add_args.extend([
+            "wifi-sec.key-mgmt", "wpa-psk",
+            "wifi-sec.psk", password,
+        ])
+
+    print(f"[WiFi] Creating connection profile...")
+    success, output = _run_nmcli(add_args)
+    if not success:
+        print(f"[WiFi] Failed to create profile: {output}")
+        return False, output
+
+    # Activate the connection
+    print(f"[WiFi] Activating connection...")
+    success, output = _run_nmcli(["connection", "up", ssid])
     if success:
+        print(f"[WiFi] Connected to: {ssid}")
         return True, f"Connected to {ssid}"
+
+    print(f"[WiFi] Activation failed: {output}")
+
+    # Clean up on failure
+    _run_nmcli(["connection", "delete", ssid])
     return False, output
+
+
+def _disable_autoconnect_for_ssid(target_ssid: str):
+    """Disable autoconnect on ALL profiles that connect to this SSID."""
+    list_success, output = _run_nmcli(["-t", "-f", "NAME,TYPE", "connection", "show"])
+    if not list_success or not output:
+        return
+
+    for line in output.split("\n"):
+        parts = line.split(":")
+        if len(parts) >= 2 and "wireless" in parts[1].lower():
+            conn_name = parts[0]
+            # Check if this profile connects to the target SSID
+            ssid_success, ssid_output = _run_nmcli([
+                "-t", "-f", "802-11-wireless.ssid",
+                "connection", "show", conn_name
+            ])
+            if ssid_success and target_ssid in ssid_output:
+                _run_nmcli(["connection", "modify", conn_name, "connection.autoconnect", "no"])
+                print(f"[WiFi] Disabled autoconnect for: {conn_name}")
 
 
 def _disconnect_shell() -> bool:
     current = _get_current_connection_shell()
     if current:
-        success, _ = _run_nmcli(["connection", "down", current["ssid"]])
-        return success
+        device = current.get("device")
+        if device:
+            # Use device disconnect - this prevents auto-reconnect
+            # (connection down would just reconnect immediately if autoconnect=yes)
+            print(f"[WiFi] Disconnecting device: {device}")
+            success, output = _run_nmcli(["device", "disconnect", device])
+            print(f"[WiFi] Device disconnect result: {success}, {output}")
+            return success
+        else:
+            # Fallback to connection down
+            success, _ = _run_nmcli(["connection", "down", current["ssid"]])
+            return success
     return True
 
 
@@ -330,3 +433,35 @@ def get_wifi_status() -> dict:
         "current_connection": current,
         "available_networks": networks,
     }
+
+
+# Security type mapping for model choices
+SECURITY_MAP = {
+    "WPA3": "wpa3",
+    "WPA2": "wpa2",
+    "WPA": "wpa",
+    "WEP": "wep",
+}
+
+
+def _map_security_type(security: str) -> str:
+    """Map raw security string to model choice."""
+    for key, value in SECURITY_MAP.items():
+        if key in security:
+            return value
+    return "open"
+
+
+def get_security_type(ssid: str) -> str:
+    """Get security type for an SSID from scan results."""
+    networks = scan_networks()
+    network = next((n for n in networks if n["ssid"] == ssid), None)
+    if not network:
+        return "wpa2"
+    return _map_security_type(network.get("security", "Open"))
+
+
+def get_current_signal_strength() -> int:
+    """Get signal strength of current connection."""
+    current = get_current_connection()
+    return current.get("signal_strength", 0) if current else 0

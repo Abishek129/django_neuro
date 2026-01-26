@@ -267,6 +267,28 @@ def add_roles_to_group(request):
     return JsonResponse({"success": True}, status=200)
 
 
+@require_http_methods(["GET"])
+def get_notifications(request):
+    """Get notifications for the authenticated user based on their access token UUID."""
+    claims, error = _get_token_claims(request)
+    if error:
+        return error
+
+    user_uuid = (claims or {}).get("sub")
+    if not user_uuid:
+        return JsonResponse({"detail": "User id not found in token"}, status=400)
+
+    is_read = request.GET.get("is_read")
+    queryset = Notification.objects.filter(user_uuid=user_uuid).order_by("-created_at")
+
+    if is_read is not None:
+        is_read_bool = is_read.lower() in ("true", "1", "yes")
+        queryset = queryset.filter(is_read=is_read_bool)
+
+    notifications = [_notification_to_dict(n) for n in queryset]
+    return JsonResponse({"notifications": notifications, "count": len(notifications)}, status=200)
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def create_notification(request):

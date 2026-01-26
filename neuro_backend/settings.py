@@ -40,8 +40,9 @@ CSRF_TRUSTED_ORIGINS = [
     "http://192.168.1.20:5175",
     "https://localhost",
     "https://127.0.0.1",
+    
 ]
-CORS_ALLOW_ALL_ORGINS = True
+CORS_ALLOW_ALL_ORIGINS = True
 
 
 # Application definition

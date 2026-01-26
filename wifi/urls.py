@@ -11,4 +11,6 @@ urlpatterns = [
     path("connect", views.connect, name="wifi-connect"),
     path("disconnect", views.disconnect, name="wifi-disconnect"),
     path("forget", views.forget, name="wifi-forget"),
+    path("saved-networks", views.get_saved_networks, name="wifi-saved-networks"),
+    path("reconnect", views.reconnect, name="wifi-reconnect"),
 ]
