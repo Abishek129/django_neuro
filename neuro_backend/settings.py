@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -25,21 +26,22 @@ SECRET_KEY = 'django-insecure-d_!=_yhox2safmz_c*k--t6p=h2hy_u)!&*1anlixi@u+-%)q(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = [
-    "192.168.1.20",
-    
-]
+ALLOWED_HOSTS = ["*"]
 
 CSRF_TRUSTED_ORIGINS = [
-    "http://192.168.1.20",
-    "http://192.168.1.20:5174",
-]
-CORS_ALLOW_ALL_ORGINS = True
-CORS_ALLOWED_ORIGINS = [
+    "http://localhost",
+    "http://127.0.0.1",
+    "http://0.0.0.0",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://0.0.0.0:8000",
     "http://192.168.1.20",
     "http://192.168.1.20:5174",
     "http://192.168.1.20:5175",
+    "https://localhost",
+    "https://127.0.0.1",
 ]
+CORS_ALLOW_ALL_ORGINS = True
 
 
 # Application definition
@@ -93,9 +95,15 @@ TEMPLATES = [
 WSGI_APPLICATION = 'neuro_backend.wsgi.application'
 ASGI_APPLICATION = 'neuro_backend.asgi.application'
 
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+
 CHANNEL_LAYERS = {
     "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer",
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [(REDIS_HOST, REDIS_PORT)],
+        },
     }
 }
 
@@ -151,3 +159,7 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+KEYCLOAK_BASE_URL = "http://localhost:8080"   # or your Keycloak URL
+KEYCLOAK_ADMIN_USERNAME = "admin"
+KEYCLOAK_ADMIN_PASSWORD = "admin"
+KEYCLOAK_CLIENT_ID = "admin-cli"

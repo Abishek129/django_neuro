@@ -1,6 +1,6 @@
-import logging
+﻿import logging
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import requests
 from django.conf import settings
@@ -14,7 +14,11 @@ class KeycloakError(Exception):
 
 class KeycloakClient:
     def __init__(self):
-        self.base_url = getattr(settings, "KEYCLOAK_BASE_URL", os.getenv("KEYCLOAK_BASE_URL", "http://192.168.1.20:8080/keycloak"))
+        self.base_url = getattr(
+            settings,
+            "KEYCLOAK_BASE_URL",
+            os.getenv("KEYCLOAK_BASE_URL", "http://192.168.1.20:8080/keycloak"),
+        )
         self.admin_username = getattr(settings, "KEYCLOAK_ADMIN_USERNAME", os.getenv("KEYCLOAK_ADMIN_USERNAME"))
         self.admin_password = getattr(settings, "KEYCLOAK_ADMIN_PASSWORD", os.getenv("KEYCLOAK_ADMIN_PASSWORD"))
         self.client_id = getattr(settings, "KEYCLOAK_CLIENT_ID", os.getenv("KEYCLOAK_CLIENT_ID", "admin-cli"))
@@ -126,6 +130,92 @@ class KeycloakClient:
             raise KeycloakError("Failed to list roles")
         return response.json()
 
+    def list_groups(
+        self,
+        realm: str,
+        search: Optional[str] = None,
+        first: int = 0,
+        max_results: int = 200,
+    ) -> Any:
+        token = self.obtain_admin_token()
+        headers = {"Authorization": f"Bearer {token}"}
+
+        params: Dict[str, Any] = {}
+        if search:
+            params["search"] = search
+        if first:
+            params["first"] = first
+        if max_results:
+            params["max"] = max_results
+
+        url = f"{self._realm_admin_url(realm)}/groups"
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        if response.status_code != 200:
+            log.error("Failed to list groups (status %s): %s", response.status_code, response.text)
+            raise KeycloakError("Failed to list groups")
+        return response.json()
+
+    def list_group_members(
+        self,
+        realm: str,
+        group_id: str,
+        first: int = 0,
+        max_results: int = 200,
+    ) -> Any:
+        token = self.obtain_admin_token()
+        headers = {"Authorization": f"Bearer {token}"}
+
+        params: Dict[str, Any] = {}
+        if first:
+            params["first"] = first
+        if max_results:
+            params["max"] = max_results
+
+        url = f"{self._realm_admin_url(realm)}/groups/{group_id}/members"
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        if response.status_code != 200:
+            log.error("Failed to list group members (status %s): %s", response.status_code, response.text)
+            raise KeycloakError("Failed to list group members")
+        return response.json()
+
+    def list_group_role_mappings(
+        self,
+        realm: str,
+        group_id: str,
+    ) -> Any:
+        token = self.obtain_admin_token()
+        headers = {"Authorization": f"Bearer {token}"}
+
+        url = f"{self._realm_admin_url(realm)}/groups/{group_id}/role-mappings/realm"
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            log.error("Failed to list group role mappings (status %s): %s", response.status_code, response.text)
+            raise KeycloakError("Failed to list group role mappings")
+        return response.json()
+
+    def list_role_users(
+        self,
+        realm: str,
+        role_name: str,
+        first: int = 0,
+        max_results: int = 200,
+    ) -> Any:
+        token = self.obtain_admin_token()
+        headers = {"Authorization": f"Bearer {token}"}
+
+        params: Dict[str, Any] = {}
+        if first:
+            params["first"] = first
+        if max_results:
+            params["max"] = max_results
+
+        url = f"{self._realm_admin_url(realm)}/roles/{role_name}/users"
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        if response.status_code != 200:
+            log.error("Failed to list role users (status %s): %s", response.status_code, response.text)
+            raise KeycloakError("Failed to list role users")
+        return response.json()
+
     def find_user_id(self, realm: str, username: str) -> Optional[str]:
         try:
             users = self.list_users(realm=realm, search=username, first=0, max_results=10)
@@ -223,6 +313,23 @@ class KeycloakClient:
                 normalized[key] = [str(value)]
         return normalized
 
+
+def flatten_groups(groups: Any) -> list[Dict[str, Any]]:
+    flat: list[Dict[str, Any]] = []
+    if not groups:
+        return flat
+    stack = list(groups)
+    while stack:
+        grp = stack.pop()
+        if not isinstance(grp, dict):
+            continue
+        flat.append(grp)
+        subs = grp.get("subGroups") or []
+        if isinstance(subs, list):
+            stack.extend(subs)
+    return flat
+
+
 def create_group(realm: str, name: str, attributes: Optional[Dict[str, Any]] = None, parent_id: Optional[str] = None) -> Dict[str, Any]:
     client = KeycloakClient()
     return client.create_group(realm, name, attributes, parent_id)
@@ -231,6 +338,32 @@ def create_group(realm: str, name: str, attributes: Optional[Dict[str, Any]] = N
 def list_users(realm: str, search: Optional[str] = None, first: int = 0, max_results: int = 50) -> Any:
     client = KeycloakClient()
     return client.list_users(realm, search=search, first=first, max_results=max_results)
+
+
+def list_realm_roles(realm: str, search: Optional[str] = None, first: int = 0, max_results: int = 100) -> Any:
+    client = KeycloakClient()
+    return client.list_realm_roles(realm=realm, search=search, first=first, max_results=max_results)
+
+
+def list_role_users(realm: str, role_name: str, first: int = 0, max_results: int = 200) -> Any:
+    client = KeycloakClient()
+    return client.list_role_users(realm=realm, role_name=role_name, first=first, max_results=max_results)
+
+
+def list_groups(realm: str, search: Optional[str] = None, first: int = 0, max_results: int = 200) -> Any:
+    client = KeycloakClient()
+    
+    return client.list_groups(realm=realm, search=search, first=first, max_results=max_results)
+
+
+def list_group_members(realm: str, group_id: str, first: int = 0, max_results: int = 200) -> Any:
+    client = KeycloakClient()
+    return client.list_group_members(realm=realm, group_id=group_id, first=first, max_results=max_results)
+
+
+def list_group_role_mappings(realm: str, group_id: str) -> Any:
+    client = KeycloakClient()
+    return client.list_group_role_mappings(realm=realm, group_id=group_id)
 
 
 def add_user_to_group(
@@ -248,11 +381,6 @@ def add_user_to_group(
         username=username,
         group_name=group_name,
     )
-
-
-def list_realm_roles(realm: str, search: Optional[str] = None, first: int = 0, max_results: int = 100) -> Any:
-    client = KeycloakClient()
-    return client.list_realm_roles(realm=realm, search=search, first=first, max_results=max_results)
 
 
 def add_roles_to_group(realm: str, group_id: str, roles: list[Dict[str, Any]]) -> None:

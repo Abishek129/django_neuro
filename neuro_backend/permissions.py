@@ -42,6 +42,30 @@ def _get_bearer_token(request) -> Tuple[str | None, JsonResponse | None]:
     return parts[1], None
 
 
+def _get_token_claims(request) -> Tuple[Dict[str, Any] | None, JsonResponse | None]:
+    token, error = _get_bearer_token(request)
+    if error:
+        return None, error
+    payload, error = _decode_jwt_no_verify(token)
+    if error:
+        return None, error
+    return payload, None
+
+
+def has_logger_read_role(claims: Dict[str, Any]) -> bool:
+    roles = (claims.get("realm_access") or {}).get("roles", [])
+    if not isinstance(roles, list):
+        return False
+    return "logger-read" in roles or "logger_read" in roles
+
+
+def has_logger_write_role(claims: Dict[str, Any]) -> bool:
+    roles = (claims.get("realm_access") or {}).get("roles", [])
+    if not isinstance(roles, list):
+        return False
+    return "logger_write" in roles or "logger_write" in roles
+
+
 class KeycloakGroupPermission(BasePermission):
     def __init__(self, group_name: str):
         self.group_name = group_name
@@ -81,3 +105,40 @@ class KeycloakGroupPermission(BasePermission):
 class ProjectManagerPermission(KeycloakGroupPermission):
     def __init__(self):
         super().__init__("ProjectManager1")
+
+class HasLoggerReadRole(BasePermission):
+    def __init__(self):
+        self.message = "Missing required role: logger-read"
+
+    def has_permission(self, request) -> bool:
+        payload, error = _get_token_claims(request)
+        if error:
+            try:
+                self.message = json.loads(error.content.decode("utf-8")).get("detail", self.message)
+            except (ValueError, json.JSONDecodeError):
+                self.message = error.content.decode("utf-8")
+            self.status_code = error.status_code
+            return False
+
+        if not has_logger_read_role(payload or {}):
+            return False
+        return True
+
+class HasLoggerWriteRole(BasePermission):
+    def __init__(self):
+        self.message = "Missing required role: logger_write"
+
+    def has_permission(self, request) -> bool:
+        payload, error = _get_token_claims(request)
+        if error:
+            try:
+                self.message = json.loads(error.content.decode("utf-8")).get("detail", self.message)
+            except (ValueError, json.JSONDecodeError):
+                self.message = error.content.decode("utf-8")
+            self.status_code = error.status_code
+            return False
+
+        if not has_logger_write_role(payload or {}):
+            return False
+        return True
+
