@@ -64,6 +64,7 @@ INSTALLED_APPS = [
     'control_pannel',
     'keycloak_api',
     'task_manager',
+    'rest_framework',
 ]
 
 MIDDLEWARE = [
