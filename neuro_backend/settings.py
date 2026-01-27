@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     'terminal_api',
     'control_pannel',
     'keycloak_api',
+    'task_manager',
 ]
 
 MIDDLEWARE = [
@@ -103,9 +104,15 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [(REDIS_HOST, REDIS_PORT)],
+            "hosts": [f"redis://{REDIS_HOST}:{REDIS_PORT}/0"],
         },
-    }
+    },
+    "task_manager": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [f"redis://{REDIS_HOST}:{REDIS_PORT}/1"],
+        },
+    },
 }
 
 

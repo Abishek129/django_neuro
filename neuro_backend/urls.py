@@ -26,4 +26,5 @@ urlpatterns = [
     path('api/terminal/', include('terminal_api.urls')),
     path('api/control/', include('control_pannel.urls')),
     path('api/keycloak/', include('keycloak_api.urls')),
+    path('api/task/', include('task_manager.urls')),
 ]
