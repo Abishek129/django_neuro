@@ -89,6 +89,7 @@ def _categorize(name: str) -> str:
 
 def get_cpu_breakdown() -> dict:
     try:
+        cpu_count = psutil.cpu_count(logical=True) or 1
         buckets = {
             "jobs": {"cpu_percent": 0.0},
             "apps": {"cpu_percent": 0.0},
@@ -98,7 +99,10 @@ def get_cpu_breakdown() -> dict:
             try:
                 info = proc.info
                 cat = _categorize(info['name'])
-                buckets[cat]["cpu_percent"] += info['cpu_percent'] or 0.0
+                # Normalize by CPU count: psutil returns per-core percentage
+                # On a 4-core system, a process using all cores shows as 400%
+                # We divide by cpu_count to get percentage of total system CPU
+                buckets[cat]["cpu_percent"] += (info['cpu_percent'] or 0.0) / cpu_count
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
 
@@ -112,19 +116,23 @@ def get_cpu_breakdown() -> dict:
 
 def get_cpu_processes(limit: int = 20) -> dict:
     try:
+        cpu_count = psutil.cpu_count(logical=True) or 1
         processes = []
         for proc in psutil.process_iter(
-            ['pid', 'name', 'cpu_percent', 'memory_percent', 'status', 'username']
+            ['pid', 'name', 'cpu_percent', 'memory_percent', 'status', 'username', 'ppid']
         ):
             try:
                 info = proc.info
+                children = proc.children(recursive=False)
                 processes.append({
                     "pid": info['pid'],
+                    "ppid": info['ppid'],
                     "name": info['name'],
-                    "cpu_percent": info['cpu_percent'] or 0.0,
+                    "cpu_percent": round((info['cpu_percent'] or 0.0) / cpu_count, 2),
                     "memory_percent": round(info['memory_percent'] or 0.0, 2),
                     "status": info['status'],
                     "username": info['username'],
+                    "children": [{"pid": c.pid, "name": c.name()} for c in children],
                 })
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue

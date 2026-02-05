@@ -1,7 +1,10 @@
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
+from neuro_backend.permissions import HasPowerToShut
 from . import services
 
 
@@ -26,19 +29,21 @@ def sleep(request):
     return JsonResponse({"success": True})
 
 
-@csrf_exempt
-@require_http_methods(["POST"])
-def restart(request):
-    success = services.restart_system()
-    if not success:
-        return JsonResponse({"detail": "Failed to restart"}, status=500)
-    return JsonResponse({"success": True})
+class RestartView(APIView):
+    permission_classes = [HasPowerToShut]
+
+    def post(self, request):
+        success = services.restart_system()
+        if not success:
+            return Response({"detail": "Failed to restart"}, status=500)
+        return Response({"success": True})
 
 
-@csrf_exempt
-@require_http_methods(["POST"])
-def shutdown(request):
-    success = services.shutdown_system()
-    if not success:
-        return JsonResponse({"detail": "Failed to shutdown"}, status=500)
-    return JsonResponse({"success": True})
+class ShutdownView(APIView):
+    permission_classes = [HasPowerToShut]
+
+    def post(self, request):
+        success = services.shutdown_system()
+        if not success:
+            return Response({"detail": "Failed to shutdown"}, status=500)
+        return Response({"success": True})

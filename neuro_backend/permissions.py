@@ -3,6 +3,7 @@ import json
 from typing import Any, Dict, Tuple
 
 from django.http import JsonResponse
+from rest_framework.permissions import BasePermission as DRFBasePermission
 
 
 class BasePermission:
@@ -141,4 +142,19 @@ class HasLoggerWriteRole(BasePermission):
         if not has_logger_write_role(payload or {}):
             return False
         return True
+
+
+class HasPowerToShut(DRFBasePermission):
+    """
+    DRF permission that checks for the 'power_to_shut' realm role
+    in the JWT claims set by KeycloakJWTAuthentication.
+    """
+    message = "Missing required role: power_to_shut"
+
+    def has_permission(self, request, view) -> bool:
+        claims = getattr(request, "auth", None) or {}
+        if not claims:
+            return False
+        roles = (claims.get("realm_access") or {}).get("roles", [])
+        return "power_to_shut" in roles
 

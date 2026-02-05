@@ -3,6 +3,9 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
+
 from neuro_backend.http import parse_json
 
 from . import services
@@ -35,6 +38,16 @@ def toggle_wifi(request):
     success = services.set_wifi_enabled(bool(enabled))
     if not success:
         return JsonResponse({"detail": "Failed to set WiFi"}, status=500)
+
+    channel_layer = get_channel_layer()
+    async_to_sync(channel_layer.group_send)(
+        "power_updates",
+        {
+            "type": "power.message",
+            "payload": {"action": "wifi_toggle", "enabled": bool(enabled)},
+        },
+    )
+
     return JsonResponse({"enabled": bool(enabled), "success": True})
 
 

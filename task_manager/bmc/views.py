@@ -13,7 +13,31 @@ from .services.hwmon_service import (
     get_ipmi_sel,
     get_system_info,
     get_power_status,
+    get_bmc_status,
+    get_bmc_history,
+    clear_bmc_history,
+    get_sensors_data2,
 )
+
+# ------------------- Core endpoints (match cpu/memory/gpu/disk pattern) -------------------
+
+@api_view(["GET"])
+def get_status(request):
+    """Get current BMC/hardware sensor status (main endpoint)."""
+    return Response(get_bmc_status())
+
+
+@api_view(["GET"])
+def get_history(request):
+    """Get BMC sensor history from Redis."""
+    return Response(get_bmc_history())
+
+
+@api_view(["DELETE"])
+def clear_history(request):
+    """Clear BMC history from Redis."""
+    return Response(clear_bmc_history())
+
 
 # ------------------- Live readings (DB-free) -------------------
 
@@ -163,3 +187,9 @@ def system_info(request):
 @api_view(["GET"])
 def power_status(request):
     return Response(get_power_status())
+
+
+@api_view(["GET"])
+def raw_sensors(request):
+    """Get raw sensor data directly from lm-sensors (sensors -j output)."""
+    return Response(get_sensors_data2())

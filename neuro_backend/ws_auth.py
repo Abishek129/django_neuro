@@ -1,23 +1,42 @@
-import base64
-import json
-from typing import Any, Dict, Tuple
+import jwt
+from jwt import PyJWKClient
 from urllib.parse import parse_qs
+from django.conf import settings
 
 
-def _base64url_decode(value: str) -> bytes:
-    padding = "=" * (-len(value) % 4)
-    return base64.urlsafe_b64decode(value + padding)
+class KeycloakJwtWsMiddleware:
+    def __init__(self, inner):
+        self.inner = inner
+        jwks_url = (
+            f"{settings.KEYCLOAK_BASE_URL.rstrip('/')}/realms/{settings.KEYCLOAK_REALM}"
+            f"/protocol/openid-connect/certs"
+        )
+        self.jwks_client = PyJWKClient(jwks_url)
 
+    async def __call__(self, scope, receive, send):
+        from django.contrib.auth.models import AnonymousUser
 
-def _decode_jwt_no_verify(token: str) -> Tuple[Dict[str, Any] | None, str | None]:
-    parts = token.split(".")
-    if len(parts) != 3:
-        return None, "Invalid token format"
-    try:
-        payload = json.loads(_base64url_decode(parts[1]).decode("utf-8"))
-    except (ValueError, json.JSONDecodeError):
-        return None, "Invalid token payload"
-    return payload, None
+        token = _extract_token(scope)
+        if token:
+            try:
+                signing_key = self.jwks_client.get_signing_key_from_jwt(token).key
+                claims = jwt.decode(
+                    token,
+                    signing_key,
+                    algorithms=["RS256"],
+                    issuer=f"{settings.KEYCLOAK_BASE_URL.rstrip('/')}/realms/{settings.KEYCLOAK_REALM}",
+                    options={"verify_aud": False},
+                )
+                scope["auth"] = claims
+                scope["user"] = AnonymousUser()
+            except Exception:
+                scope["auth"] = None
+                scope["user"] = AnonymousUser()
+        else:
+            scope["auth"] = None
+            scope["user"] = AnonymousUser()
+
+        return await self.inner(scope, receive, send)
 
 
 def _extract_token(scope) -> str | None:
@@ -31,21 +50,6 @@ def _extract_token(scope) -> str | None:
     qs = parse_qs(scope.get("query_string", b"").decode())
     token = (qs.get("token") or [None])[0]
     return token
-
-
-class KeycloakJwtWsMiddleware:
-    def __init__(self, inner):
-        self.inner = inner
-
-    async def __call__(self, scope, receive, send):
-        token = _extract_token(scope)
-        if token:
-            claims, _ = _decode_jwt_no_verify(token)
-            scope["auth"] = claims
-        else:
-            scope["auth"] = None
-
-        return await self.inner(scope, receive, send)
 
 
 def KeycloakJwtWsMiddlewareStack(inner):

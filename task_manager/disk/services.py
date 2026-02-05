@@ -36,6 +36,10 @@ def get_disk_status() -> dict:
     try:
         partitions = []
         for part in psutil.disk_partitions(all=False):
+            # Skip virtual/placeholder disks (sda with 0 bytes)
+            if part.device.startswith('/dev/sda'):
+                continue
+
             try:
                 usage = psutil.disk_usage(part.mountpoint)
                 partitions.append({
@@ -53,16 +57,32 @@ def get_disk_status() -> dict:
             except (PermissionError, OSError):
                 continue
 
-        io = psutil.disk_io_counters()
+        # Get per-disk I/O counters, excluding sda
+        io_counters = psutil.disk_io_counters(perdisk=True)
         io_stats = None
-        if io:
+
+        # Filter out sda and aggregate remaining disks
+        if io_counters:
+            total_read_bytes = 0
+            total_write_bytes = 0
+            total_read_count = 0
+            total_write_count = 0
+
+            for disk_name, counters in io_counters.items():
+                if disk_name.startswith('sda'):
+                    continue
+                total_read_bytes += counters.read_bytes
+                total_write_bytes += counters.write_bytes
+                total_read_count += counters.read_count
+                total_write_count += counters.write_count
+
             io_stats = {
-                "read_bytes": io.read_bytes,
-                "write_bytes": io.write_bytes,
-                "read_count": io.read_count,
-                "write_count": io.write_count,
-                "read_mb": _bytes_to_mb(io.read_bytes),
-                "write_mb": _bytes_to_mb(io.write_bytes),
+                "read_bytes": total_read_bytes,
+                "write_bytes": total_write_bytes,
+                "read_count": total_read_count,
+                "write_count": total_write_count,
+                "read_mb": _bytes_to_mb(total_read_bytes),
+                "write_mb": _bytes_to_mb(total_write_bytes),
             }
 
         return {

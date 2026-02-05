@@ -16,6 +16,7 @@ class Event(models.Model):
     SEVERITY_CHOICES = [
         ("warning", "Warning"),
         ("critical", "Critical"),
+        ("info", "Info")
     ]
 
     metric = models.CharField(max_length=20, choices=METRIC_CHOICES)
