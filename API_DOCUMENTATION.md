@@ -276,10 +276,87 @@ All routes are prefixed with `/api/`.
 
 | Route | Consumer | Description |
 |-------|----------|-------------|
-| `api/task/processes/ws/` | `UnifiedProcessesConsumer` | Aggregated top processes |
+| `api/task/processes/ws/` | `UnifiedProcessesConsumer` | Aggregated top processes with CPU, memory, disk I/O, network, and health data |
+
+**Files**: `task_manager/processes/consumers.py`, `task_manager/processes/services.py`
+**Channel layer alias**: `task_manager` (Redis DB 1)
 
 **Query params**: `interval` (1-60s, default 2s), `limit` (1-200, default 50)
-**Runtime commands**: `set_interval`, `set_limit`
+
+**Runtime commands** (client → server):
+
+| Command | Payload | Description |
+|---------|---------|-------------|
+| `set_interval` | `{"type": "set_interval", "interval": N}` | Change streaming interval (1-60s) |
+| `set_limit` | `{"type": "set_limit", "limit": N}` | Change process limit (1-200) |
+| `get_errors` | `{"type": "get_errors", "pid": N}` | Request detailed error info for a specific PID |
+
+**Server → client messages**:
+
+`unified_processes` — streamed every `interval` seconds:
+
+```json
+{
+  "type": "unified_processes",
+  "data": {
+    "total_count": 400,
+    "processes": [
+      {
+        "pid": 1234,
+        "ppid": 1,
+        "name": "python3",
+        "type": "App | Job | AI Agent",
+        "execution": "Centralized",
+        "owner": "rohith",
+        "status": "running",
+        "cpu_percent": 12.5,
+        "mem_mb": 256.0,
+        "disk_read_mbps": 1.2,
+        "disk_write_mbps": 0.5,
+        "parent": {"pid": 1, "name": "systemd"},
+        "children": [{"pid": 1235, "name": "worker"}],
+        "connections": [
+          {"proto": "TCP", "local": "127.0.0.1:8000", "foreign": "127.0.0.1:54321", "state": "ESTAB"}
+        ],
+        "net_recv_kbps": 10.5,
+        "net_sent_kbps": 3.2,
+        "net_total_mb": 1.45,
+        "error_count": 0,
+        "health": "healthy",
+        "last_error": null
+      }
+    ]
+  }
+}
+```
+
+`process_errors` — response to `get_errors` command:
+
+```json
+{
+  "type": "process_errors",
+  "data": {
+    "pid": 1234,
+    "error_count": 3,
+    "window": "10m",
+    "trend": "increasing | decreasing | stable | unknown",
+    "last_error": "error message text",
+    "health": "healthy | warning | degraded",
+    "errors": [
+      {"timestamp": "...", "message": "...", "priority": "3"}
+    ]
+  }
+}
+```
+
+**Implementation details**:
+- Two-phase collection: fast pass for all processes (lightweight psutil fields), then expensive calls (`io_counters`) only for top N by CPU
+- Parent/children derived from a ppid map built in one O(n) pass
+- Network data gathered via a single `ss -tanpi` subprocess call; byte counters are diffed between samples to compute per-process rates
+- Disk I/O rates computed by diffing `io_counters` between consecutive samples
+- Process type categorized by name prefix: `job_*` → Job, `ai_*` → AI Agent, otherwise App
+- Background error collection loop refreshes journald error cache (top 20 PIDs) every 30s via Redis
+- Health status: 0 errors → `healthy`, 1-5 → `warning`, 6+ → `degraded`
 
 ---
 

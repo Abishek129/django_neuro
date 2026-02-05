@@ -174,12 +174,12 @@ _SS_CONN_RE = re.compile(
 
 def _parse_ss_output() -> dict[int, dict]:
     """
-    Single ss -tipn call → per-PID connections + cumulative byte counters.
+    Single ss -tanpi call → per-PID connections (incl. LISTEN) + cumulative byte counters.
     Returns {pid: {'bytes_sent': N, 'bytes_recv': N, 'connections': [...]}}
     """
     try:
         result = subprocess.run(
-            ['ss', '-tipn'],
+            ['ss', '-tanpi'],
             capture_output=True, text=True, timeout=5,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
@@ -195,7 +195,6 @@ def _parse_ss_output() -> dict[int, dict]:
             continue
 
         pid_match = _SS_PID_RE.search(line)
-        info_line = lines[i + 1] if i + 1 < len(lines) else ''
 
         if pid_match:
             pid = int(pid_match.group(1))
@@ -215,11 +214,15 @@ def _parse_ss_output() -> dict[int, dict]:
             else:
                 conn_entry = None
 
-            # Parse byte counters from the info line
-            sent_match = _SS_BYTES_SENT_RE.search(info_line)
-            recv_match = _SS_BYTES_RECV_RE.search(info_line)
-            sent = int(sent_match.group(1)) if sent_match else 0
-            recv = int(recv_match.group(1)) if recv_match else 0
+            # Check if next line has TCP info (LISTEN sockets don't have it)
+            sent = 0
+            recv = 0
+            if i + 1 < len(lines) and lines[i + 1].startswith('\t'):
+                info_line = lines[i + 1]
+                sent_match = _SS_BYTES_SENT_RE.search(info_line)
+                recv_match = _SS_BYTES_RECV_RE.search(info_line)
+                sent = int(sent_match.group(1)) if sent_match else 0
+                recv = int(recv_match.group(1)) if recv_match else 0
 
             if pid not in per_pid:
                 per_pid[pid] = {'bytes_sent': 0, 'bytes_recv': 0, 'connections': []}
